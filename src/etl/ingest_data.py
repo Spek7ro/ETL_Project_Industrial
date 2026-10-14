@@ -1,30 +1,36 @@
-import kagglehub
-import shutil
-import os
+"""Ingesta: descarga el dataset desde Kaggle hacia la zona de landing."""
 import glob
+import os
+import shutil
 
-def ingest_data():
+from src.config import KAGGLE_DATASET, LANDING_DIR
+
+
+def ingest_data(force: bool = False) -> None:
+    os.makedirs(LANDING_DIR, exist_ok=True)
+
+    if not force and glob.glob(os.path.join(LANDING_DIR, "*.csv")):
+        print(f"Landing ya contiene datos en {LANDING_DIR}; se omite la descarga (use --force).")
+        return
+
+    import kagglehub
+
     print("Downloading dataset from Kaggle...")
-    # Download latest version
-    path = kagglehub.dataset_download("mujtabamatin/dataset-for-machine-failure-detection")
+    path = kagglehub.dataset_download(KAGGLE_DATASET)
     print("Path to downloaded files:", path)
-    
-    # Target directory
-    landing_dir = 'data/landing'
-    os.makedirs(landing_dir, exist_ok=True)
-    
-    # Find CSV files in the downloaded path
+
     csv_files = glob.glob(os.path.join(path, "*.csv"))
-    
     if not csv_files:
         print("No CSV files found in the downloaded dataset.")
         return
-        
+
     for csv_file in csv_files:
         filename = os.path.basename(csv_file)
-        dest_path = os.path.join(landing_dir, filename)
-        shutil.copy(csv_file, dest_path)
-        print(f"Moved {filename} to {landing_dir}")
+        shutil.copy(csv_file, os.path.join(LANDING_DIR, filename))
+        print(f"Moved {filename} to {LANDING_DIR}")
+
 
 if __name__ == "__main__":
-    ingest_data()
+    import sys
+
+    ingest_data(force="--force" in sys.argv)
