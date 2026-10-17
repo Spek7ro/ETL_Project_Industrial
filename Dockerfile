@@ -11,7 +11,7 @@ COPY frontend ./frontend
 COPY Data/landing ./Data/landing
 COPY run_pipeline.py .
 
-# Ejecuta ETL + entrenamiento en la construcción para que la imagen incluya el modelo
+# Descarga el dataset (si no se copió), ejecuta el ETL y entrena: la imagen incluye el modelo
 RUN python run_pipeline.py
 
 EXPOSE 8000

@@ -1,113 +1,137 @@
-"""Endpoints de monitorización de flota y analítica para el dashboard."""
+"""Endpoints de monitorización de flota, análisis what-if y analítica para el dashboard."""
 import json
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from src.api.schemas import Component, WhatIfRequest
 from src.config import (
-    HEALTH_ALERT,
-    HEALTH_CRITICAL,
-    HEALTH_FAILURE,
+    COMPONENTS,
+    DATASET_SUMMARY_FILE,
     METRICS_FILE,
-    NUMERIC_FEATURES,
-    PROCESSED_FILE,
     QUALITY_REPORT_FILE,
-    SENSOR_LIMITS,
+    SENSOR_LABELS,
+    SENSOR_LIMITS_FILE,
     SENSOR_UNITS,
-    TARGET,
+    SENSORS,
 )
+from src.models.features import NUMERIC_FEATURES
+from src.monitoring.replay import sensor_state
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
 
 
-class MaintenanceRequest(BaseModel):
+class WorkOrderRequest(BaseModel):
     technician: str | None = Field(None, max_length=80)
+    component: Component | None = None
     notes: str | None = Field(None, max_length=500)
 
 
-def simulator(request: Request):
-    sim = getattr(request.app.state, "simulator", None)
-    if sim is None:
-        raise HTTPException(status_code=503, detail="La simulación de flota está deshabilitada.")
-    return sim
+def _read_json(path):
+    return json.loads(path.read_text()) if path.exists() else None
 
 
-def machine_or_404(sim, machine_id: str):
-    if machine_id not in sim.machines:
+def fleet_service(request: Request):
+    fleet = getattr(request.app.state, "fleet", None)
+    if fleet is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Monitorización de flota no disponible: ejecute `python run_pipeline.py` y reinicie la API.",
+        )
+    return fleet
+
+
+def machine_or_404(fleet, machine_id: str) -> None:
+    if not fleet.has_machine(machine_id):
         raise HTTPException(status_code=404, detail=f"Máquina '{machine_id}' no encontrada.")
 
 
 @router.get("/config")
-def dashboard_config():
+def dashboard_config(request: Request):
+    from src.api.main import state  # import diferido: main incluye este router
+
+    model = state["predictor"]
     return {
-        "sensor_limits": {k: dict(zip(["nominal", "alarm", "critical"], v)) for k, v in SENSOR_LIMITS.items()},
+        "sensors": SENSORS,
+        "sensor_labels": SENSOR_LABELS,
         "sensor_units": SENSOR_UNITS,
-        "health_thresholds": {"alert": HEALTH_ALERT, "critical": HEALTH_CRITICAL, "failure": HEALTH_FAILURE},
+        "sensor_limits": _read_json(SENSOR_LIMITS_FILE),
+        "components": COMPONENTS,
+        "thresholds": (
+            {"alert": model.alert_threshold, "decision": model.threshold, "horizon_hours": model.horizon_hours}
+            if model else None
+        ),
     }
 
 
 @router.get("/fleet")
 def fleet(request: Request):
-    return simulator(request).fleet()
+    return fleet_service(request).fleet()
 
 
 @router.get("/fleet/{machine_id}")
-def machine_detail(machine_id: str, request: Request, points: int = 288):
-    sim = simulator(request)
-    machine_or_404(sim, machine_id)
-    return sim.machine_detail(machine_id, points=max(10, min(points, 576)))
+def machine_detail(machine_id: str, request: Request, hours: int = 168):
+    svc = fleet_service(request)
+    machine_or_404(svc, machine_id)
+    return svc.machine_detail(machine_id, hours=max(24, min(hours, 168)))
 
 
-@router.post("/fleet/{machine_id}/maintenance")
-def maintenance(machine_id: str, body: MaintenanceRequest, request: Request):
-    sim = simulator(request)
-    machine_or_404(sim, machine_id)
-    return sim.perform_maintenance(machine_id, body.technician, body.notes)
+@router.get("/fleet/{machine_id}/inputs")
+def machine_inputs(machine_id: str, request: Request):
+    svc = fleet_service(request)
+    machine_or_404(svc, machine_id)
+    return svc.machine_inputs(machine_id)
+
+
+@router.post("/fleet/{machine_id}/work-orders")
+def work_order(machine_id: str, body: WorkOrderRequest, request: Request):
+    svc = fleet_service(request)
+    machine_or_404(svc, machine_id)
+    return svc.register_work_order(machine_id, body.technician, body.component, body.notes)
 
 
 @router.get("/events")
-def events(request: Request, active: bool = False, limit: int = 100):
-    return simulator(request).event_list(active_only=active, limit=max(1, min(limit, 300)))
+def events(request: Request, active: bool = False, limit: int = 200):
+    return fleet_service(request).event_list(active_only=active, limit=max(1, min(limit, 600)))
 
 
 @router.post("/events/{event_id}/ack")
 def acknowledge(event_id: int, request: Request):
-    event = simulator(request).acknowledge(event_id)
+    event = fleet_service(request).acknowledge(event_id)
     if event is None:
         raise HTTPException(status_code=404, detail="Evento no encontrado.")
     return event
 
 
+@router.post("/diagnose")
+def diagnose(body: WhatIfRequest):
+    """Análisis what-if: riesgo para un estado resumido de máquina. Las variables no
+    indicadas (p. ej. la variabilidad de los sensores) toman su valor típico."""
+    from src.api.main import predictor
+
+    model = predictor()
+    row = dict(model.feature_defaults)
+    for s, v in body.sensors.items():
+        row[f"{s}_mean_3h"] = row[f"{s}_mean_24h"] = v
+    for e, n in body.errors_24h.items():
+        row[f"{e}_count_24h"] = n
+    for c, d in body.days_since.items():
+        row[f"{c}_days_since"] = d
+    row.update(age=body.age, model=body.model)
+    features = pd.DataFrame([row])
+    features[NUMERIC_FEATURES] = features[NUMERIC_FEATURES].astype(float)
+    result = model.predict_features(features)[0]
+    limits = _read_json(SENSOR_LIMITS_FILE)
+    states = {s: sensor_state(limits[s], v) for s, v in body.sensors.items()} if limits else {}
+    return {**result, "sensor_states": states}
+
+
 @router.get("/analytics")
 def analytics():
-    """Resumen del dataset procesado por el ETL y del entrenamiento del modelo."""
-    result = {"dataset": None, "quality": None, "training": None}
-    if PROCESSED_FILE.exists():
-        df = pd.read_csv(PROCESSED_FILE)
-        by_type = df.groupby("Machine_Type")[TARGET].agg(["mean", "count"]).reset_index()
-        distributions = {}
-        for col in NUMERIC_FEATURES:
-            edges = pd.Series(pd.cut(df[col], bins=20, retbins=True)[1])
-            binned = pd.cut(df[col], bins=edges, include_lowest=True)
-            counts = df.groupby([binned, TARGET], observed=False).size().unstack(fill_value=0)
-            distributions[col] = {
-                "bin_centers": [round(float(i.mid), 2) for i in counts.index],
-                "ok": counts.get(0, pd.Series(0, index=counts.index)).astype(int).tolist(),
-                "failure": counts.get(1, pd.Series(0, index=counts.index)).astype(int).tolist(),
-            }
-        result["dataset"] = {
-            "rows": int(len(df)),
-            "failure_rate": round(float(df[TARGET].mean()), 4),
-            "by_machine_type": [
-                {"machine_type": r.Machine_Type, "failure_rate": round(float(r["mean"]), 4), "count": int(r["count"])}
-                for _, r in by_type.iterrows()
-            ],
-            "distributions": distributions,
-            "class_means": df.groupby(TARGET)[NUMERIC_FEATURES].mean().round(3).to_dict(orient="index"),
-        }
-    if QUALITY_REPORT_FILE.exists():
-        result["quality"] = json.loads(QUALITY_REPORT_FILE.read_text())
-    if METRICS_FILE.exists():
-        result["training"] = json.loads(METRICS_FILE.read_text())
-    return result
+    """Resumen del dataset, calidad del ETL y métricas del entrenamiento."""
+    return {
+        "dataset": _read_json(DATASET_SUMMARY_FILE),
+        "quality": _read_json(QUALITY_REPORT_FILE),
+        "training": _read_json(METRICS_FILE),
+    }

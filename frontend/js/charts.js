@@ -1,7 +1,8 @@
 // Capa de gráficas: Chart.js con colores tomados de los tokens CSS del tema.
-import { fmtDay, fmtTime, num } from "./format.js";
+import { fmtDay, num } from "./format.js";
 
 const Chart = window.Chart;
+const FONT = "11px system-ui, -apple-system, Segoe UI, sans-serif";
 
 export function token(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -25,45 +26,81 @@ export function theme() {
   };
 }
 
+function label(ctx, text, x, y, align, t) {
+  ctx.font = FONT;
+  const w = ctx.measureText(text).width;
+  const left = align === "right" ? x - w - 6 : x;
+  ctx.fillStyle = t.surface;
+  ctx.globalAlpha = 0.85;
+  ctx.fillRect(left, y, w + 6, 14);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = t.text2;
+  ctx.textBaseline = "top";
+  ctx.textAlign = "left";
+  ctx.fillText(text, left + 3, y + 1);
+}
+
 // ---------------------------------------------------------------- plugins
-/** Líneas de umbral horizontales con su etiqueta (alarma, crítico, falla). */
+/** Líneas de umbral con etiqueta; horizontales (eje y) o verticales (eje x). */
 const thresholdPlugin = {
   id: "thresholds",
   afterDatasetsDraw(chart, _args, opts) {
     const lines = opts?.lines;
     if (!lines?.length) return;
     const { ctx, chartArea: a, scales } = chart;
-    const y = scales.y;
+    const vertical = opts.axis === "x";
+    const scale = vertical ? scales.x : scales.y;
     const t = theme();
     ctx.save();
-    ctx.font = "11px system-ui, -apple-system, Segoe UI, sans-serif";
-    ctx.textBaseline = "bottom";
-    ctx.textAlign = "right";
-    // De arriba abajo; si dos etiquetas chocan, la siguiente se dibuja bajo su línea
+    // De arriba abajo; si dos etiquetas chocan, la siguiente va bajo su línea
     const sorted = [...lines].sort((p, q) => q.value - p.value);
-    let prevLabelY = -Infinity;
+    let prevBottom = -Infinity;
     for (const l of sorted) {
-      if (l.value < y.min || l.value > y.max) continue;
-      const py = Math.round(y.getPixelForValue(l.value)) + 0.5;
+      if (l.value < scale.min || l.value > scale.max) continue;
+      const pos = Math.round(scale.getPixelForValue(l.value)) + 0.5;
       ctx.strokeStyle = l.color;
       ctx.lineWidth = 1.5;
       ctx.setLineDash([5, 4]);
       ctx.beginPath();
-      ctx.moveTo(a.left, py);
-      ctx.lineTo(a.right, py);
+      if (vertical) { ctx.moveTo(pos, a.top); ctx.lineTo(pos, a.bottom); } else { ctx.moveTo(a.left, pos); ctx.lineTo(a.right, pos); }
       ctx.stroke();
-      if (l.label) {
-        ctx.setLineDash([]);
-        const w = ctx.measureText(l.label).width;
-        const below = py - 15 < prevLabelY + 2;
-        const top = below ? py + 2 : py - 15;
-        ctx.fillStyle = t.surface;
-        ctx.globalAlpha = 0.85;
-        ctx.fillRect(a.right - w - 8, top, w + 6, 14);
-        ctx.globalAlpha = 1;
-        ctx.fillStyle = t.text2;
-        ctx.fillText(l.label, a.right - 4, top + 13);
-        prevLabelY = top + 14;
+      ctx.setLineDash([]);
+      if (!l.label) continue;
+      if (vertical) {
+        label(ctx, l.label, pos + 4, a.top + 2, "left", t);
+      } else {
+        const top = pos - 15 < prevBottom + 2 ? pos + 2 : pos - 15;
+        label(ctx, l.label, a.right - 2, top, "right", t);
+        prevBottom = top + 14;
+      }
+    }
+    ctx.restore();
+  },
+};
+
+/** Marcadores verticales de eventos reales (fallas, mantenimientos). */
+const markerPlugin = {
+  id: "markers",
+  afterDatasetsDraw(chart, _args, opts) {
+    const marks = opts?.items;
+    if (!marks?.length) return;
+    const { ctx, chartArea: a, scales } = chart;
+    const t = theme();
+    ctx.save();
+    let row = 0;
+    for (const m of marks) {
+      const x = Math.round(scales.x.getPixelForValue(m.x)) + 0.5;
+      if (x < a.left || x > a.right) continue;
+      ctx.strokeStyle = m.color;
+      ctx.lineWidth = m.strong ? 2 : 1;
+      ctx.beginPath();
+      ctx.moveTo(x, a.top);
+      ctx.lineTo(x, a.bottom);
+      ctx.stroke();
+      if (m.label) {
+        const right = x > a.right - 90;
+        label(ctx, m.label, right ? x - 3 : x + 3, a.top + 2 + (row % 3) * 16, right ? "right" : "left", t);
+        row += 1;
       }
     }
     ctx.restore();
@@ -90,32 +127,7 @@ const crosshairPlugin = {
   },
 };
 
-/** Línea vertical "ahora" que separa historia y proyección. */
-const nowLinePlugin = {
-  id: "nowLine",
-  afterDatasetsDraw(chart, _args, opts) {
-    if (opts?.value == null) return;
-    const { ctx, chartArea: a, scales } = chart;
-    const x = Math.round(scales.x.getPixelForValue(opts.value)) + 0.5;
-    if (x < a.left || x > a.right) return;
-    const t = theme();
-    ctx.save();
-    ctx.strokeStyle = t.muted;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x, a.top);
-    ctx.lineTo(x, a.bottom);
-    ctx.stroke();
-    ctx.fillStyle = t.text2;
-    ctx.font = "11px system-ui, -apple-system, Segoe UI, sans-serif";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    ctx.fillText("Ahora", x + 4, a.top + 2);
-    ctx.restore();
-  },
-};
-
-Chart.register(thresholdPlugin, crosshairPlugin, nowLinePlugin);
+Chart.register(thresholdPlugin, markerPlugin, crosshairPlugin);
 
 function applyDefaults() {
   const t = theme();
@@ -178,150 +190,55 @@ export function refreshTheme() {
 }
 
 function timeAxis(t, min, max) {
-  const spanH = (max - min) / 3.6e6;
   return {
     type: "linear",
     min,
     max,
     ...axisStyle(t),
     grid: { display: false },
-    ticks: {
-      color: t.muted,
-      maxTicksLimit: 7,
-      maxRotation: 0,
-      callback: (v) => (spanH > 30 ? fmtDay(v) : fmtTime(v)),
-    },
+    ticks: { color: t.muted, maxTicksLimit: 7, maxRotation: 0, callback: (v) => fmtDay(v) },
   };
 }
 
-// ------------------------------------------------------------ health chart
-export function healthChart(canvas, detail, cfg) {
+// --------------------------------------------------------------- riesgo
+export function riskChart(canvas, detail, thresholds) {
   const factory = () => {
     const t = theme();
-    const pts = detail.history.map((p) => ({ x: Date.parse(p.timestamp), y: p.health }));
-    const last = pts[pts.length - 1];
-    const projection = [];
-    let max = last.x;
-    if (detail.running && detail.rul_hours != null && detail.health_slope_per_hour < 0) {
-      const horizon = Math.min(detail.rul_hours, 72);
-      const end = last.x + horizon * 3.6e6;
-      projection.push({ x: last.x, y: last.y }, { x: end, y: Math.max(0, last.y + detail.health_slope_per_hour * horizon) });
-      max = end;
-    }
-    max = Math.max(max, last.x + 6 * 3.6e6);
-    const th = cfg.health_thresholds;
+    const pts = detail.risk_history.map((r) => ({ x: Date.parse(r.timestamp), y: r.p * 100 }));
+    const min = pts.length ? pts[0].x : Date.now();
+    const max = pts.length ? pts[pts.length - 1].x : Date.now();
+    const markers = [
+      ...detail.maintenance.map((m) => ({ x: Date.parse(m.timestamp), color: t.muted, label: `Mant. ${m.component}` })),
+      ...detail.failures.map((f) => ({ x: Date.parse(f.timestamp), color: t.critical, label: `Falla ${f.component}`, strong: true })),
+    ].sort((a, b) => a.x - b.x);
     return {
       type: "line",
       data: {
-        datasets: [
-          { label: "Índice de salud", data: pts, borderColor: t.s1, backgroundColor: t.s1, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.25 },
-          { label: "Proyección", data: projection, borderColor: t.projection, backgroundColor: t.projection, borderWidth: 2, borderDash: [6, 5], pointRadius: [0, 4], pointHoverRadius: 4 },
-        ],
-      },
-      options: {
-        parsing: false,
-        interaction: { mode: "nearest", axis: "x", intersect: false },
-        scales: {
-          x: timeAxis(t, pts[0].x, max),
-          y: { min: 0, max: 100, ...axisStyle(t), ticks: { color: t.muted, stepSize: 25, padding: 6 } },
-        },
-        plugins: {
-          thresholds: {
-            lines: [
-              { value: th.alert, color: t.warning, label: `Alerta ${th.alert}` },
-              { value: th.critical, color: t.serious, label: `Crítico ${th.critical}` },
-              { value: th.failure, color: t.critical, label: `Falla funcional ${th.failure}` },
-            ],
-          },
-          crosshair: { enabled: true },
-          nowLine: { value: last.x },
-          tooltip: {
-            callbacks: {
-              title: (items) => fmtDay(items[0].parsed.x),
-              label: (item) => ` ${item.dataset.label}: ${num(item.parsed.y, 1)} / 100`,
-            },
-          },
-        },
-      },
-      $factory: factory,
-    };
-  };
-  return make(canvas, factory());
-}
-
-// ------------------------------------------------------------ sensor chart
-export function sensorChart(canvas, history, sensor, limits, unit) {
-  const factory = () => {
-    const t = theme();
-    const pts = history.map((p) => ({ x: Date.parse(p.timestamp), y: p[sensor] }));
-    const values = pts.map((p) => p.y);
-    const lo = Math.min(...values, limits.nominal);
-    const hi = Math.max(...values, limits.critical);
-    const pad = (hi - lo) * 0.08 || 1;
-    return {
-      type: "line",
-      data: { datasets: [{ label: sensor, data: pts, borderColor: t.s1, backgroundColor: t.s1, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.2 }] },
-      options: {
-        parsing: false,
-        interaction: { mode: "nearest", axis: "x", intersect: false },
-        scales: {
-          x: timeAxis(t, pts[0].x, pts[pts.length - 1].x),
-          y: { suggestedMin: Math.max(0, lo - pad), suggestedMax: hi + pad, ...axisStyle(t), ticks: { color: t.muted, maxTicksLimit: 5, padding: 6 } },
-        },
-        plugins: {
-          thresholds: {
-            lines: [
-              { value: limits.alarm, color: t.warning, label: `Alarma ${num(limits.alarm, 1)}` },
-              { value: limits.critical, color: t.critical, label: `Crítico ${num(limits.critical, 1)}` },
-            ],
-          },
-          crosshair: { enabled: true },
-          tooltip: {
-            callbacks: {
-              title: (items) => fmtDay(items[0].parsed.x),
-              label: (item) => ` ${num(item.parsed.y, 2)} ${unit}`,
-            },
-          },
-        },
-      },
-      $factory: factory,
-    };
-  };
-  return make(canvas, factory());
-}
-
-// ---------------------------------------------------------- forecast chart
-export function forecastChart(canvas, rows) {
-  const factory = () => {
-    const t = theme();
-    const color = { OPERATIVO: t.good, ALERTA: t.warning, CRITICO: t.serious, FALLA: t.critical };
-    return {
-      type: "bar",
-      data: {
-        labels: rows.map((r) => r.id),
         datasets: [{
-          label: "Horas hasta la falla",
-          data: rows.map((r) => Math.max(r.rul_hours, 0.5)),
-          backgroundColor: rows.map((r) => color[r.status]),
-          borderRadius: 4,
-          borderSkipped: "start",
-          barThickness: 14,
+          label: "Riesgo de falla", data: pts, borderColor: t.s1, backgroundColor: t.s1,
+          borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, stepped: false, tension: 0,
         }],
       },
       options: {
-        indexAxis: "y",
-        onHover: (e, els) => { e.native.target.style.cursor = els.length ? "pointer" : "default"; },
-        onClick: (_e, els) => { if (els.length) location.hash = `#/machine/${rows[els[0].index].id}`; },
+        parsing: false,
+        interaction: { mode: "nearest", axis: "x", intersect: false },
         scales: {
-          x: { min: 0, max: 72, ...axisStyle(t), ticks: { color: t.muted, stepSize: 12, callback: (v) => `${v} h` } },
-          y: { ...axisStyle(t), grid: { display: false }, ticks: { color: t.text2, font: { weight: "600" } } },
+          x: timeAxis(t, min, max),
+          y: { min: 0, max: 100, ...axisStyle(t), ticks: { color: t.muted, stepSize: 25, padding: 6, callback: (v) => `${v} %` } },
         },
         plugins: {
+          thresholds: {
+            lines: [
+              { value: thresholds.decision * 100, color: t.critical, label: `Umbral de alarma ${num(thresholds.decision * 100, 0)} %` },
+              { value: thresholds.alert * 100, color: t.warning, label: `Vigilancia ${num(thresholds.alert * 100, 0)} %` },
+            ],
+          },
+          markers: { items: markers },
+          crosshair: { enabled: true },
           tooltip: {
             callbacks: {
-              title: (items) => `${rows[items[0].dataIndex].id} · ${rows[items[0].dataIndex].name}`,
-              label: (item) => ` Falla estimada en ${num(rows[item.dataIndex].rul_hours, 1)} h`,
-              afterLabel: (item) => ` Salud actual: ${num(rows[item.dataIndex].health, 0)} / 100`,
+              title: (items) => fmtDay(items[0].parsed.x),
+              label: (item) => ` Riesgo: ${num(item.parsed.y, 1)} %`,
             },
           },
         },
@@ -332,21 +249,53 @@ export function forecastChart(canvas, rows) {
   return make(canvas, factory());
 }
 
-// --------------------------------------------------------- analytics charts
-export function barChart(canvas, { labels, values, format, max, reference, yTitle }) {
+// ------------------------------------------------------------ sensores
+export function sensorChart(canvas, history, sensor, limits, unit, events) {
   const factory = () => {
     const t = theme();
+    const pts = history.map((p) => ({ x: Date.parse(p.timestamp), y: p[sensor] }));
+    // Media móvil de 24 h: es donde aparece el precursor de la falla
+    const mean = pts.map((p, i) => {
+      const win = pts.slice(Math.max(0, i - 23), i + 1);
+      return { x: p.x, y: win.reduce((acc, q) => acc + q.y, 0) / win.length };
+    }).slice(Math.min(23, pts.length - 1));
+    const values = pts.map((p) => p.y);
+    const lo = Math.min(...values, limits.alarm_low);
+    const hi = Math.max(...values, limits.alarm_high);
+    const pad = (hi - lo) * 0.06;
+    const u = unit ? ` ${unit}` : "";
     return {
-      type: "bar",
-      data: { labels, datasets: [{ data: values, backgroundColor: t.s1, borderRadius: 4, borderSkipped: "start", maxBarThickness: 48 }] },
+      type: "line",
+      data: {
+        datasets: [
+          { label: "Lectura horaria", data: pts, borderColor: t.baseline, backgroundColor: t.baseline, borderWidth: 1, pointRadius: 0, pointHoverRadius: 3, tension: 0 },
+          { label: "Media 24 h", data: mean, borderColor: t.s1, backgroundColor: t.s1, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.2 },
+        ],
+      },
       options: {
+        parsing: false,
+        interaction: { mode: "index", axis: "x", intersect: false },
         scales: {
-          x: { ...axisStyle(t), grid: { display: false }, ticks: { color: t.text2 } },
-          y: { min: 0, max, ...axisStyle(t), title: { display: !!yTitle, text: yTitle, color: t.muted }, ticks: { color: t.muted, maxTicksLimit: 6, callback: format } },
+          x: timeAxis(t, pts[0].x, pts[pts.length - 1].x),
+          y: { suggestedMin: lo - pad, suggestedMax: hi + pad, ...axisStyle(t), ticks: { color: t.muted, maxTicksLimit: 5, padding: 6 } },
         },
         plugins: {
-          thresholds: { lines: reference ? [{ value: reference.value, color: t.projection, label: reference.label }] : [] },
-          tooltip: { callbacks: { label: (item) => ` ${format(item.parsed.y)}` } },
+          thresholds: {
+            lines: [
+              { value: limits.critical_high, color: t.critical, label: `Crítico ${num(limits.critical_high, 0)}` },
+              { value: limits.alarm_high, color: t.warning, label: `Alarma ${num(limits.alarm_high, 0)}` },
+              { value: limits.alarm_low, color: t.warning, label: `Alarma ${num(limits.alarm_low, 0)}` },
+              { value: limits.critical_low, color: t.critical, label: `Crítico ${num(limits.critical_low, 0)}` },
+            ],
+          },
+          markers: { items: events.map((f) => ({ x: Date.parse(f.timestamp), color: t.critical, strong: true })) },
+          crosshair: { enabled: true },
+          tooltip: {
+            callbacks: {
+              title: (items) => fmtDay(items[0].parsed.x),
+              label: (item) => ` ${item.dataset.label}: ${num(item.parsed.y, 1)}${u}`,
+            },
+          },
         },
       },
       $factory: factory,
@@ -355,34 +304,27 @@ export function barChart(canvas, { labels, values, format, max, reference, yTitl
   return make(canvas, factory());
 }
 
-/** Distribución de un sensor por clase (porcentaje dentro de cada clase). */
-export function distributionChart(canvas, dist, unit) {
+// ---------------------------------------------------- barras genéricas
+export function barChart(canvas, { labels, values, format, max, reference, horizontal = false, tooltipTitle }) {
   const factory = () => {
     const t = theme();
-    const norm = (arr) => { const s = arr.reduce((a, b) => a + b, 0) || 1; return arr.map((v) => (100 * v) / s); };
-    const ok = norm(dist.ok);
-    const fail = norm(dist.failure);
+    const valueAxis = { min: 0, max, ...axisStyle(t), ticks: { color: t.muted, maxTicksLimit: 6, callback: format } };
+    const catAxis = { ...axisStyle(t), grid: { display: false }, ticks: { color: t.text2, autoSkip: false } };
     return {
-      type: "line",
-      data: {
-        labels: dist.bin_centers,
-        datasets: [
-          { label: "Sin falla", data: ok, borderColor: t.s1, backgroundColor: t.s1, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.3 },
-          { label: "Con falla", data: fail, borderColor: t.s2, backgroundColor: t.s2, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.3 },
-        ],
-      },
+      type: "bar",
+      data: { labels, datasets: [{ data: values, backgroundColor: t.s1, borderRadius: 4, borderSkipped: "start", maxBarThickness: horizontal ? 14 : 48 }] },
       options: {
-        interaction: { mode: "index", intersect: false },
-        scales: {
-          x: { type: "category", ...axisStyle(t), grid: { display: false }, ticks: { color: t.muted, maxTicksLimit: 6, maxRotation: 0, callback: (_v, i) => num(dist.bin_centers[i], 0) } },
-          y: { min: 0, ...axisStyle(t), ticks: { color: t.muted, maxTicksLimit: 5, callback: (v) => `${v} %` } },
-        },
+        indexAxis: horizontal ? "y" : "x",
+        scales: horizontal ? { x: valueAxis, y: catAxis } : { x: catAxis, y: valueAxis },
         plugins: {
-          crosshair: { enabled: true },
+          thresholds: {
+            axis: horizontal ? "x" : "y",
+            lines: reference ? [{ value: reference.value, color: t.projection, label: reference.label }] : [],
+          },
           tooltip: {
             callbacks: {
-              title: (items) => `≈ ${num(dist.bin_centers[items[0].dataIndex], 1)} ${unit}`,
-              label: (item) => ` ${item.dataset.label}: ${num(item.parsed.y, 1)} % de la clase`,
+              title: (items) => (tooltipTitle ? tooltipTitle(items[0].dataIndex) : items[0].label),
+              label: (item) => ` ${format(horizontal ? item.parsed.x : item.parsed.y)}`,
             },
           },
         },
@@ -394,8 +336,8 @@ export function distributionChart(canvas, dist, unit) {
 }
 
 // --------------------------------------------------------------- sparkline
-/** Mini tendencia de salud dibujada a mano (12+ por pantalla, sin Chart.js). */
-export function sparkline(canvas, values, tone) {
+/** Mini tendencia de riesgo (decenas por pantalla: dibujada a mano, sin Chart.js). */
+export function sparkline(canvas, values, tone, threshold) {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth || 120;
   const hgt = canvas.clientHeight || 36;
@@ -406,15 +348,13 @@ export function sparkline(canvas, values, tone) {
   ctx.clearRect(0, 0, w, hgt);
   if (!values?.length) return;
   const t = theme();
-  const min = Math.min(0, ...values);
-  const max = 100;
   const x = (i) => 2 + (i / Math.max(values.length - 1, 1)) * (w - 6);
-  const y = (v) => 3 + (1 - (v - min) / (max - min || 1)) * (hgt - 6);
+  const y = (v) => 3 + (1 - v) * (hgt - 6);
   ctx.strokeStyle = t.grid;
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(0, y(70) + 0.5);
-  ctx.lineTo(w, y(70) + 0.5);
+  ctx.moveTo(0, Math.round(y(threshold)) + 0.5);
+  ctx.lineTo(w, Math.round(y(threshold)) + 0.5);
   ctx.stroke();
   ctx.strokeStyle = t.s1;
   ctx.lineWidth = 2;
@@ -422,13 +362,11 @@ export function sparkline(canvas, values, tone) {
   ctx.beginPath();
   values.forEach((v, i) => (i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v))));
   ctx.stroke();
-  const lx = x(values.length - 1);
-  const ly = y(values[values.length - 1]);
   ctx.fillStyle = t[tone] || t.s1;
   ctx.strokeStyle = t.surface;
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.arc(lx, ly, 3.5, 0, Math.PI * 2);
+  ctx.arc(x(values.length - 1), y(values[values.length - 1]), 3.5, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
 }

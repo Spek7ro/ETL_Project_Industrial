@@ -1,177 +1,185 @@
 # Sistema inteligente de mantenimiento predictivo industrial
 
-Sistema de mantenimiento predictivo basado en datos de sensores industriales
-(temperatura, vibración, consumo eléctrico y humedad). Incluye un **pipeline ETL**,
-**modelos de machine learning** y una **API REST** para predicción en tiempo real.
+Sistema de mantenimiento predictivo sobre el dataset **Microsoft Azure Predictive Maintenance**
+(100 máquinas, telemetría horaria de un año, errores, mantenimientos y fallas por componente).
+Incluye un **pipeline ETL**, un **modelo de machine learning** que predice *qué componente fallará
+en las próximas 24 h*, una **API REST** para predicción en tiempo real y un **dashboard** que
+reproduce la telemetría real hora a hora y mide en vivo si el modelo anticipa las fallas.
 
 ```
-Kaggle ──► Data/landing ──► Extract ──► Transform ──► Load ──► Data/processed + BD (SQLite/PostgreSQL)
-                                                                   │
-                                                                   ▼
-                          API FastAPI ◄── models/failure_model.joblib ◄── Entrenamiento
-                         /predict ...                                      (CV + selección)
-                              │
-                              └──► predictions_log (BD)
+Kaggle / réplica GitHub ──► Data/landing (5 CSV) ──► Extract ──► Transform ──► Load
+                                                                    │            ├─► Data/processed/*.parquet
+                                                                    │            └─► Base de datos (SQLite/PostgreSQL)
+                                                                    ▼
+                                         características por máquina y hora + etiqueta (falla en 24 h)
+                                                                    │
+                                     Entrenamiento (split temporal, calibración, umbral por costes)
+                                                                    │
+                     models/failure_model.joblib ──► API FastAPI ──► /predict (ventana de una máquina)
+                                                         │
+                                                         └─► Dashboard: reproducción del periodo de test
 ```
 
 ## Estructura
 
 ```
-├── Data/landing/                  # Datos crudos (zona de aterrizaje)
+├── Data/landing/                  # Datos crudos (se descargan; no se versionan)
 ├── src/
-│   ├── config.py                  # Rutas, columnas, rangos válidos y parámetros
+│   ├── config.py                  # Rutas, fuentes, columnas, horizonte, costes
 │   ├── etl/
-│   │   ├── ingest_data.py         # Descarga del dataset desde Kaggle
-│   │   ├── extract.py             # Lectura y validación del esquema
-│   │   ├── transform.py           # Limpieza, validación de calidad y outliers
-│   │   ├── load.py                # CSV limpio + reporte de calidad + tabla SQL
+│   │   ├── ingest_data.py         # Descarga (Kaggle → réplica GitHub) + control de integridad
+│   │   ├── extract.py             # Lectura y validación del esquema de las 5 tablas
+│   │   ├── transform.py           # Limpieza, límites de sensores, características y etiquetas
+│   │   ├── load.py                # Parquet + reportes JSON + tablas en la base de datos
 │   │   └── pipeline.py            # Orquestador ETL
 │   ├── models/
-│   │   ├── features.py            # Ingeniería de características + preprocesado
-│   │   ├── train.py               # Comparación de modelos, umbral y persistencia
+│   │   ├── features.py            # Características compartidas por ETL e inferencia
+│   │   ├── train.py               # Comparación de modelos, calibración, umbral, evaluación
 │   │   └── predict.py             # Servicio de inferencia
 │   ├── monitoring/
-│   │   ├── health.py              # Índice de salud, estados y vida útil restante (RUL)
-│   │   └── simulator.py           # Telemetría simulada de la flota con degradación
+│   │   └── replay.py              # Reproducción en tiempo real de la flota
 │   └── api/
-│       ├── schemas.py             # Esquemas Pydantic (validación de entrada)
-│       ├── dashboard.py           # Endpoints de flota, eventos y analítica
+│       ├── schemas.py             # Esquemas Pydantic
+│       ├── dashboard.py           # Endpoints de flota, what-if y analítica
 │       └── main.py                # Aplicación FastAPI (sirve también el dashboard)
-├── frontend/                      # Dashboard web (HTML/CSS/JS + Chart.js local)
-├── tests/                         # Pruebas de ETL, modelo y API
-├── run_pipeline.py                # ETL + entrenamiento en un solo comando
-├── Dockerfile / docker-compose.yml
+├── frontend/                      # Dashboard (HTML/CSS/JS + Chart.js local, sin compilación)
+├── tests/                         # Pruebas con datos sintéticos en el mismo formato
+├── run_pipeline.py                # Ingesta + ETL + entrenamiento en un solo comando
+└── Dockerfile / docker-compose.yml
 ```
 
 ## Puesta en marcha
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
 
-python run_pipeline.py                 # ETL + entrenamiento (usa Data/landing)
-python run_pipeline.py --download      # descarga antes el dataset desde Kaggle
-
-uvicorn src.api.main:app --reload      # Dashboard en http://localhost:8000  ·  API en /docs
-python -m pytest                       # pruebas
+python run_pipeline.py                 # descarga (~80 MB, solo la 1.ª vez), ETL y entrenamiento (~2 min)
+uvicorn src.api.main:app --reload      # Dashboard en http://localhost:8000 · API en /docs
+python -m pytest                       # pruebas (no necesitan descargar el dataset)
 ```
 
 Cada etapa también puede ejecutarse por separado:
 `python -m src.etl.ingest_data`, `python -m src.etl.pipeline`, `python -m src.models.train`.
 
-Con Docker (API + PostgreSQL):
+Con Docker (API + PostgreSQL): `docker compose up --build`.
 
-```bash
-docker compose up --build
-```
+## Datos
+
+| Tabla | Filas | Contenido |
+|---|---|---|
+| `PdM_telemetry` | 876.100 | Voltaje, rotación, presión y vibración por máquina y hora (2015) |
+| `PdM_errors` | 3.919 | Errores del controlador (`error1` … `error5`) |
+| `PdM_maint` | 3.286 | Reemplazos de componentes (`comp1` … `comp4`), programados o por falla |
+| `PdM_failures` | 761 | Fallas: componente reemplazado por avería |
+| `PdM_machines` | 100 | Modelo (`model1` … `model4`) y antigüedad |
+
+La ingesta intenta Kaggle (`arnabbiswas1/microsoft-azure-predictive-maintenance`) y, si no hay
+acceso, descarga una réplica pública en GitHub. Esa réplica se verificó contra la copia publicada
+por Microsoft (`microsoft/AMLWorkshop`): telemetría, fallas y errores coinciden al 100 %. Tras la
+descarga se comprueba el número de filas de cada archivo.
+
+> **El dataset es sintético.** Microsoft lo generó para un tutorial: cada falla va precedida de
+> errores del controlador y de la desviación de un sensor concreto. Por eso el modelo alcanza
+> métricas casi perfectas. Con telemetría real de planta los resultados serán más modestos,
+> aunque el pipeline y la metodología de evaluación son los mismos.
 
 ## Pipeline ETL
 
 | Etapa | Qué hace |
 |---|---|
-| **Ingesta** | Descarga `mujtabamatin/dataset-for-machine-failure-detection` de Kaggle a `Data/landing` (se omite si ya hay datos; `--force` para re-descargar). |
-| **Extract** | Lee el CSV y valida que existan las columnas requeridas. |
-| **Transform** | Conversión de tipos, normalización de `Machine_Type`, eliminación de duplicados, objetivos inválidos y tipos de máquina desconocidos; lecturas fuera de rango físico → nulas; imputación por mediana según tipo de máquina; winsorización de outliers (IQR × 3). Genera un reporte de calidad. |
-| **Load** | Escribe `Data/processed/machine_failure_clean.csv`, `data_quality_report.json` y la tabla `sensor_readings` en la base de datos (`DATABASE_URL`, SQLite por defecto). |
+| **Extract** | Lee las 5 tablas y valida sus columnas. |
+| **Transform** | Tipos y fechas; duplicados; lecturas fuera de rango físico → nulas e interpoladas por máquina; eventos con componente, error o máquina desconocidos se descartan. Calcula **límites de operación** por sensor (percentiles 0,5/2,5/97,5/99,5) y la **tabla de características**. |
+| **Load** | Parquet en `Data/processed/`, reportes `data_quality_report.json`, `sensor_limits.json`, `dataset_summary.json`, y las tablas limpias en la base de datos (`DATABASE_URL`). |
+
+**Características** (por máquina, cada 3 h): media y desviación de cada sensor en las últimas 3 h
+y 24 h, número de errores de cada tipo en 24 h, días desde el último reemplazo de cada componente,
+modelo y antigüedad. **Etiqueta**: componente que falla en las próximas 24 h, o `none`. El mismo
+código (`src/models/features.py`) calcula las características en el ETL y en la API, y una prueba
+verifica que cada fila solo usa datos anteriores a su instante (sin fuga de información).
 
 ## Modelo
 
-- Características derivadas: `Temp_x_Vibration`, `Power_per_Vibration`, `Thermal_Stress`,
-  más escalado y one-hot de `Machine_Type`. Todo va dentro de un `Pipeline` de scikit-learn,
-  por lo que la API recibe las lecturas crudas.
-- Candidatos: regresión logística, Random Forest y Gradient Boosting, comparados con
-  validación cruzada estratificada (5 folds, ROC-AUC) frente a un baseline aleatorio.
-- El umbral de decisión se ajusta con el estadístico J de Youden sobre predicciones
-  out-of-fold; las métricas finales se miden en un conjunto de test (20 %) y se guardan en
-  `models/metrics.json`.
+- **División temporal**: train (ene–jul) → validación (ago–sep) → test (oct–dic), con un hueco
+  de 24 h entre tramos. Nunca se mezclan datos futuros en el entrenamiento.
+- **Candidatos**: regresión logística, Random Forest y Gradient Boosting (histogramas), con
+  pesos de clase balanceados; se elige por **PR-AUC** en validación (las fallas son el 2 % de las filas).
+- **Calibración isotónica** en validación: el dashboard muestra probabilidades interpretables.
+- **Umbral de alarma por costes**: minimiza `10 × fallas no anticipadas + 1 × falsas alarmas`
+  (configurable con `COST_MISSED_FAILURE` y `COST_FALSE_ALARM`).
+- **Evaluación en test por evento**: qué fracción de las fallas reales tuvo una alarma previa,
+  con cuánta antelación y si el componente predicho era el correcto.
 
-> **Nota sobre el dataset actual.** En `machine_failure_dataset.csv` la etiqueta
-> `Failure_Risk` es estadísticamente independiente de los sensores (la tasa de fallo es
-> ~30 % en todos los quintiles de cada variable), por lo que ningún modelo supera el azar
-> (ROC-AUC ≈ 0.5). El entrenamiento lo detecta, emite una advertencia, usa el umbral por
-> defecto y expone `has_predictive_signal: false` en `/model/info`. El código es genérico:
-> con datos reales etiquetados con el mismo esquema, el pipeline aprende la relación
-> (las pruebas lo verifican con datos sintéticos con señal: ROC-AUC > 0.85).
+Resultados en el periodo de test (oct–dic 2015, no visto al entrenar): PR-AUC 0,997 (azar 0,018),
+**163 de 163 fallas anticipadas**, antelación mediana 24 h y componente acertado en todas.
+Las variables más influyentes son los errores del controlador y la media de 24 h del sensor
+asociado a cada componente (comp1 → voltaje, comp2 → rotación, comp3 → presión, comp4 → vibración).
 
 ## API
 
 | Método | Ruta | Descripción |
 |---|---|---|
 | GET | `/health` | Estado del servicio y del modelo |
-| GET | `/model/info` | Modelo seleccionado, umbral, métricas de test |
-| POST | `/predict` | Predicción para una lectura |
-| POST | `/predict/batch` | Predicción para hasta 1000 lecturas |
+| GET | `/model/info` | Modelo, horizonte, umbrales y métricas de test |
+| POST | `/predict` | Riesgo de falla de una máquina a partir de su historia reciente |
+| POST | `/predict/batch` | Ídem para hasta 200 máquinas |
+
+`/predict` recibe lo que enviaría una pasarela de planta cada hora: las últimas lecturas
+(idealmente 24), los errores recientes y los últimos reemplazos de componentes.
 
 ```bash
 curl -X POST http://localhost:8000/predict -H "Content-Type: application/json" -d '{
-  "machine_id": "MILL-01", "Temperature": 85.2, "Vibration": 58.1,
-  "Power_Usage": 9.4, "Humidity": 39.4, "Machine_Type": "Mill"}'
+  "machine_id": "M-012", "model": "model3", "age": 14,
+  "telemetry": [
+    {"datetime": "2015-10-03T05:00:00", "volt": 168.9, "rotate": 340.8, "pressure": 98.7, "vibration": 41.5},
+    {"datetime": "2015-10-03T06:00:00", "volt": 170.4, "rotate": 331.0, "pressure": 99.2, "vibration": 39.8}],
+  "errors": [{"datetime": "2015-10-03T05:00:00", "errorID": "error2"}],
+  "maintenance": [{"datetime": "2015-09-15T06:00:00", "comp": "comp2"}]}'
 ```
 
-```json
-{"machine_id": "MILL-01", "failure_probability": 0.36, "failure_predicted": false,
- "risk_level": "BAJO", "recommendation": "Operación normal; continuar con el monitoreo."}
-```
+La respuesta incluye la probabilidad de falla en 24 h, el nivel de riesgo (`BAJO`, `MEDIO`,
+`ALTO`), el componente probable, la probabilidad por componente y una recomendación. Cada
+predicción se registra en la tabla `predictions_log`.
 
-Niveles de riesgo: `BAJO` (< 0.4), `MEDIO` (0.4–0.7), `ALTO` (≥ 0.7), cada uno con una
-recomendación de mantenimiento. Las entradas fuera de rango o con tipo de máquina
-desconocido se rechazan con `422`. Cada predicción se registra en la tabla
-`predictions_log` (desactivable con `LOG_PREDICTIONS=false`).
+## Dashboard
 
-## Dashboard de mantenimiento
-
-Al iniciar la API, `http://localhost:8000/` redirige al dashboard (`/dashboard/`). No requiere
-compilación ni conexión a internet: Chart.js se sirve desde `frontend/vendor/`.
+El dashboard **reproduce hora a hora la telemetría real del periodo de test** (por defecto, una
+hora de planta cada 3 segundos). En cada hora calcula el riesgo de las 100 máquinas con el mismo
+código que la API, registra las fallas y mantenimientos reales del dataset y comprueba si el
+modelo las había anticipado.
 
 | Vista | Contenido |
 |---|---|
-| **Resumen de planta** | KPIs de disponibilidad, salud media, máquinas por estado, próxima falla estimada y fallas previstas en 24 h. Tarjetas por línea de producción con índice de salud, tendencia, vida útil restante y sensores fuera de límite; vista de tabla; filtros por línea, tipo, estado y búsqueda. Pronóstico de fallas a 72 h y alarmas activas. |
-| **Detalle de máquina** | Índice de salud de las últimas 48 h con proyección de la tendencia hasta el umbral de falla funcional, fecha estimada de falla, gráficas de los 4 sensores con sus límites de alarma y críticos (o tabla de lecturas), probabilidad del modelo ML y registro de mantenimiento con técnico y trabajos realizados. |
-| **Alarmas y eventos** | Registro de alarmas por condición, predicciones de falla y mantenimientos, con filtros y reconocimiento individual o masivo. |
-| **Diagnóstico manual** | Evalúa una lectura puntual (p. ej., ronda de inspección): índice de salud, estado de cada sensor, probabilidad ML y acción recomendada. |
-| **Modelo y datos** | Comparación de modelos en validación cruzada frente al baseline aleatorio, matriz de confusión, tasa de falla por tipo, reporte de calidad del ETL y distribución de cada sensor por clase. |
+| **Resumen de planta** | KPIs (disponibilidad, máquinas por estado, fallas anticipadas, falsas alarmas, alarmas sin reconocer); mapa de las 100 máquinas, tarjetas o tabla; filtros por modelo, estado y búsqueda; máquinas en riesgo y alarmas activas. |
+| **Detalle de máquina** | Riesgo de las últimas horas con umbrales y marcas de fallas y mantenimientos reales; probabilidad por componente y días desde su reemplazo; 7 días de sensores (lectura horaria y media de 24 h) con límites de operación; historial de eventos; registro de órdenes de trabajo. |
+| **Alarmas y eventos** | Alarmas del modelo con su resultado (confirmada, falsa alarma, en ventana), fallas reales (anticipadas o no), mantenimientos, errores y órdenes de trabajo; reconocimiento individual o masivo. |
+| **Análisis what-if** | Parte del estado actual de una máquina y permite cambiar sensores, errores y antigüedad de componentes para ver cómo cambia el riesgo. |
+| **Modelo y datos** | Comparación de modelos, variables más influyentes, matriz de confusión, rendimiento por componente, firma de cada falla, datos de origen y calidad del ETL. |
 
-Diseño: siguiendo la filosofía HMI de ISA-101, el color se reserva para estados anómalos y
-siempre va acompañado de icono y texto. Incluye tema claro/oscuro y es adaptable a móvil.
+Estados: **Operativo** (riesgo bajo), **En vigilancia** (por encima de la mitad del umbral),
+**Crítico** (por encima del umbral de alarma: falla probable en 24 h) y **En falla** (8 h tras
+una falla real). Siguiendo la filosofía HMI de ISA-101, el color se reserva para los estados
+anómalos y siempre va con icono y texto. Tema claro/oscuro y diseño adaptable a móvil.
 
-### Cómo se calcula el estado de una máquina
-
-- **Índice de salud (0-100)**: desviación de cada sensor respecto a su valor nominal, normalizada
-  entre el nominal y el límite crítico (`SENSOR_LIMITS` en `src/config.py`); combina la peor
-  desviación con la media ponderada y se suaviza con una media móvil exponencial.
-- **Estado**: Operativo (≥ 70), Alerta (45-70), Crítico (< 45), En falla (máquina detenida).
-- **Vida útil restante (RUL)**: regresión lineal de la salud en las últimas 4 h, extrapolada hasta
-  el umbral de falla funcional (15/100).
-- **Probabilidad ML**: el modelo entrenado por el pipeline evalúa cada lectura. Con el dataset
-  actual no tiene señal predictiva (ver nota más arriba), así que el dashboard la muestra como
-  referencia y basa el estado en el índice de salud por condición.
-
-### Telemetría simulada
-
-Como el dataset no contiene series temporales ni identificadores de máquina, `FleetSimulator`
-genera la telemetría de una planta con 12 máquinas en 3 líneas. Cada máquina acumula desgaste
-(estable, normal o acelerado) que deriva sus sensores hacia los límites hasta provocar una falla,
-que se repara automáticamente a las 6 h simuladas o al registrar un mantenimiento. La simulación
-avanza en segundo plano (por defecto 1 ciclo = 10 min de planta cada 3 s) y precarga 48 h de
-historial. Para conectar sensores reales (OPC-UA, MQTT, historiador) basta con sustituir el
-simulador por una fuente que exponga la misma interfaz (`fleet`, `machine_detail`, `event_list`,
-`perform_maintenance`, `acknowledge`).
+Para conectar telemetría real (OPC-UA, MQTT, historiador), basta con alimentar
+`FleetReplay._process_hour` con las lecturas de cada hora en lugar de leerlas del dataset.
 
 ### Endpoints del dashboard
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| GET | `/api/fleet` | Estado actual de la flota y KPIs |
-| GET | `/api/fleet/{id}` | Detalle e historial de una máquina |
-| POST | `/api/fleet/{id}/maintenance` | Registra un mantenimiento (`technician`, `notes`) |
-| GET | `/api/events` | Alarmas y eventos (`active=true` para solo los no reconocidos) |
-| POST | `/api/events/{id}/ack` | Reconoce una alarma |
-| POST | `/api/diagnose` | Índice de salud + predicción ML de una lectura |
+| GET | `/api/fleet` | Estado de la flota, KPIs y progreso de la reproducción |
+| GET | `/api/fleet/{id}` | Detalle, telemetría (7 días), riesgo y eventos de una máquina |
+| GET | `/api/fleet/{id}/inputs` | Estado resumido actual (punto de partida del what-if) |
+| POST | `/api/fleet/{id}/work-orders` | Registra una orden de trabajo (`technician`, `component`, `notes`) |
+| GET | `/api/events` | Eventos (`active=true` para los no reconocidos) |
+| POST | `/api/events/{id}/ack` | Reconoce un evento |
+| POST | `/api/diagnose` | Riesgo para un estado resumido (what-if) |
 | GET | `/api/analytics` | Resumen del dataset, calidad del ETL y métricas del modelo |
-| GET | `/api/config` | Límites de sensores y umbrales de salud |
+| GET | `/api/config` | Sensores, límites de operación y umbrales |
 
 ## Configuración
 
-Variables de entorno (ver `.env.example`): `DATABASE_URL`, `DECISION_THRESHOLD`,
-`LOG_PREDICTIONS`, `DATA_DIR`, `MODELS_DIR`, `SIMULATION_ENABLED`, `SIM_TICK_SECONDS`,
-`SIM_MINUTES_PER_TICK`, `SIM_SEED`.
+Variables de entorno (ver `.env.example`): `DATABASE_URL`, `HORIZON_HOURS`,
+`COST_MISSED_FAILURE`, `COST_FALSE_ALARM`, `LOG_PREDICTIONS`, `DATA_DIR`, `MODELS_DIR`,
+`SIMULATION_ENABLED`, `SIM_TICK_SECONDS`, `REPLAY_HOURS_PER_TICK`.

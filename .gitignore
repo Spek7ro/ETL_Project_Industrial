@@ -211,3 +211,5 @@ Data/processed/
 Data/*.db
 models/*.joblib
 models/metrics.json
+# Dataset crudo (~80 MB): se descarga con `python -m src.etl.ingest_data`
+Data/landing/*.csv
