@@ -1,16 +1,29 @@
 """API REST para predicción de fallos en tiempo real."""
+import asyncio
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import create_engine
 
+from src.api.dashboard import router as dashboard_router
+
 from src.api.schemas import BatchRequest, BatchResponse, Health, ModelInfo, Prediction, SensorReading
-from src.config import DATABASE_URL, PREDICTIONS_TABLE
+from src.config import (
+    DATABASE_URL,
+    FRONTEND_DIR,
+    PREDICTIONS_TABLE,
+    SIM_TICK_SECONDS,
+    SIMULATION_ENABLED,
+)
 from src.models.predict import FailurePredictor, get_predictor
+from src.monitoring.health import health_index, sensor_state, status_from_health
+from src.monitoring.simulator import FleetSimulator
 
 logger = logging.getLogger("predictive_maintenance")
 LOG_PREDICTIONS = os.getenv("LOG_PREDICTIONS", "true").lower() == "true"
@@ -30,9 +43,29 @@ async def lifespan(app: FastAPI):
             state["engine"] = create_engine(DATABASE_URL)
         except Exception as exc:  # la API debe funcionar aunque la BD no esté disponible
             logger.warning("No se pudo conectar a la BD de predicciones: %s", exc)
+
+    app.state.simulator = None
+    task = None
+    if SIMULATION_ENABLED:
+        app.state.simulator = FleetSimulator(predictor=state["predictor"])
+        task = asyncio.create_task(run_simulation(app.state.simulator))
     yield
+    if task is not None:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
     if state["engine"] is not None:
         state["engine"].dispose()
+
+
+async def run_simulation(sim: FleetSimulator) -> None:
+    """Avanza la telemetría simulada de la flota en segundo plano."""
+    while True:
+        await asyncio.sleep(SIM_TICK_SECONDS)
+        try:
+            await asyncio.to_thread(sim.step)
+        except Exception:  # un fallo puntual no debe detener la simulación
+            logger.exception("Error al avanzar la simulación")
 
 
 app = FastAPI(
@@ -72,9 +105,14 @@ def run_prediction(readings: list[SensorReading]) -> list[Prediction]:
     return [Prediction(machine_id=r.machine_id, **res) for r, res in zip(readings, results)]
 
 
+app.include_router(dashboard_router)
+if FRONTEND_DIR.exists():
+    app.mount("/dashboard", StaticFiles(directory=FRONTEND_DIR, html=True), name="dashboard")
+
+
 @app.get("/", include_in_schema=False)
 def root():
-    return {"message": "Sistema de Mantenimiento Predictivo Industrial", "docs": "/docs"}
+    return RedirectResponse(url="/dashboard/")
 
 
 @app.get("/health", response_model=Health)
@@ -109,3 +147,19 @@ def predict_batch(request: BatchRequest):
         total=len(predictions),
         high_risk_count=sum(p.risk_level == "ALTO" for p in predictions),
     )
+
+
+@app.post("/api/diagnose", tags=["dashboard"])
+def diagnose(reading: SensorReading):
+    """Diagnóstico de una lectura: índice de salud por condición + predicción del modelo."""
+    values = reading.model_dump(exclude={"machine_id"})
+    health = health_index(values)
+    ml = None
+    if state["predictor"] is not None:
+        ml = run_prediction([reading])[0].model_dump()
+    return {
+        "health": health,
+        "status": status_from_health(health),
+        "sensor_states": {k: sensor_state(k, values[k]) for k in ("Temperature", "Vibration", "Power_Usage", "Humidity")},
+        "ml": ml,
+    }
