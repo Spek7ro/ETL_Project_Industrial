@@ -1,4 +1,4 @@
-"""Load: persistencia del dataset limpio en CSV y en base de datos."""
+"""Load: tablas limpias y características en Parquet, reportes en JSON y tablas en la BD."""
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,32 +8,44 @@ from sqlalchemy import create_engine
 
 from src.config import (
     DATABASE_URL,
-    PROCESSED_FILE,
+    DATASET_SUMMARY_FILE,
+    FEATURES_FILE,
+    PROCESSED_DIR,
     QUALITY_REPORT_FILE,
-    TABLE_NAME,
+    SENSOR_LIMITS_FILE,
 )
 
 
+def _write_json(path: Path, data: dict) -> None:
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+
+
 def load(
-    df: pd.DataFrame,
+    tables: dict[str, pd.DataFrame],
+    features: pd.DataFrame,
+    limits: dict,
+    summary: dict,
     report: dict,
-    csv_path: Path = PROCESSED_FILE,
-    report_path: Path = QUALITY_REPORT_FILE,
+    processed_dir: Path = PROCESSED_DIR,
     database_url: str = DATABASE_URL,
-    table_name: str = TABLE_NAME,
 ) -> None:
-    csv_path, report_path = Path(csv_path), Path(report_path)
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(csv_path, index=False)
+    processed_dir = Path(processed_dir)
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    for name, df in tables.items():
+        df.to_parquet(processed_dir / f"{name}.parquet", index=False)
+    features_file = processed_dir / FEATURES_FILE.name
+    features.to_parquet(features_file, index=False)
 
-    report = {**report, "loaded_at": datetime.now(timezone.utc).isoformat()}
-    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False))
+    loaded_at = datetime.now(timezone.utc).isoformat()
+    _write_json(processed_dir / QUALITY_REPORT_FILE.name, {**report, "loaded_at": loaded_at})
+    _write_json(processed_dir / SENSOR_LIMITS_FILE.name, limits)
+    _write_json(processed_dir / DATASET_SUMMARY_FILE.name, summary)
 
+    # Las tablas limpias van a la base de datos (las características se quedan en Parquet)
     if database_url.startswith("sqlite:///"):
         Path(database_url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
     engine = create_engine(database_url)
-    out = df.copy()
-    out["ingested_at"] = report["loaded_at"]
-    out.to_sql(table_name, engine, if_exists="replace", index_label="reading_id")
+    for name, df in tables.items():
+        df.to_sql(name, engine, if_exists="replace", index=False, chunksize=50_000)
     engine.dispose()
-    print(f"[load] {len(df)} filas -> {csv_path} y tabla '{table_name}'")
+    print(f"[load] Tablas -> {processed_dir} y base de datos; {len(features)} filas de características")

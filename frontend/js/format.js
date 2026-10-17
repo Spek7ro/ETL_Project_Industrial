@@ -15,21 +15,27 @@ export const SEVERITY = {
   info: { label: "Informativa", icon: "i-info", tone: "info" },
 };
 export const EVENT_KIND = {
-  alarm: "Alarma por condición",
-  prediction: "Predicción de falla",
-  maintenance: "Mantenimiento",
+  prediction: "Alarma del modelo",
+  failure: "Falla real",
+  maintenance: "Mantenimiento programado",
+  error: "Error del controlador",
+  workorder: "Orden de trabajo",
+  system: "Sistema",
+};
+export const RESOLUTION = {
+  pending: { label: "En ventana", tone: "warning" },
+  confirmed: { label: "Confirmada", tone: "good" },
+  false_alarm: { label: "Falsa alarma", tone: "serious" },
+  anticipated: { label: "Anticipada", tone: "good" },
+  missed: { label: "No anticipada", tone: "critical" },
 };
 
-export const SENSORS = ["Temperature", "Vibration", "Power_Usage", "Humidity"];
-export const SENSOR_LABEL = {
-  Temperature: "Temperatura",
-  Vibration: "Vibración",
-  Power_Usage: "Consumo eléctrico",
-  Humidity: "Humedad",
-};
-export const SENSOR_SHORT = { Temperature: "Temp.", Vibration: "Vibr.", Power_Usage: "Pot.", Humidity: "Hum." };
+export const SENSORS = ["volt", "rotate", "pressure", "vibration"];
+export const SENSOR_LABEL = { volt: "Voltaje", rotate: "Rotación", pressure: "Presión", vibration: "Vibración" };
+export const SENSOR_SHORT = { volt: "Volt.", rotate: "Rot.", pressure: "Pres.", vibration: "Vibr." };
 export const SENSOR_STATE_ICON = { warning: "i-warning", critical: "i-critical" };
-export const TYPE_LABEL = { Lathe: "Torno CNC", Mill: "Fresadora", Drill: "Taladro de columna" };
+export const COMPONENTS = ["comp1", "comp2", "comp3", "comp4"];
+export const MODEL_LABEL = (m) => (m ? m.replace("model", "Modelo ") : "—");
 
 const esc = document.createElement("div");
 export function h(value) {
@@ -58,25 +64,19 @@ export function pct(v, d = 0) {
   return v == null ? "—" : `${num(v * 100, d)} %`;
 }
 
-/** Vida útil restante en texto legible. */
-export function fmtRul(hours, running = true) {
-  if (!running) return "Detenida";
-  if (hours == null) return "Estable";
-  if (hours <= 0.5) return "Inminente";
-  if (hours >= 720) return "> 30 días";
-  if (hours < 48) return `${num(hours, hours < 10 ? 1 : 0)} h`;
-  const d = Math.floor(hours / 24);
-  const rem = Math.round(hours - d * 24);
-  return rem ? `${d} d ${rem} h` : `${d} d`;
+/** Probabilidad como porcentaje legible; < 1 % se muestra como "< 1 %". */
+export function riskPct(p) {
+  if (p == null) return "—";
+  if (p > 0 && p < 0.01) return "< 1 %";
+  return `${num(p * 100, 0)} %`;
 }
 
-export function rulTone(hours, running = true) {
-  if (!running) return "critical";
-  if (hours == null) return "";
-  if (hours <= 24) return "critical";
-  if (hours <= 72) return "serious";
-  if (hours <= 168) return "warning";
-  return "";
+export const STATUS_TONE = { OPERATIVO: "", ALERTA: "warning", CRITICO: "serious", FALLA: "critical" };
+
+export function fmtDays(d) {
+  if (d == null) return "sin registro";
+  if (d < 1) return `${num(d * 24, 0)} h`;
+  return `${num(d, 0)} d`;
 }
 
 const dtFmt = new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });

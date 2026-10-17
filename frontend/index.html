@@ -35,14 +35,17 @@
         <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2l2.1 2.6 3.3-.6.6 3.3L21 9.4 19.6 12 21 14.6l-3 2.1-.6 3.3-3.3-.6L12 22l-2.1-2.6-3.3.6-.6-3.3L3 14.6 4.4 12 3 9.4l3-2.1.6-3.3 3.3.6z"/><circle cx="12" cy="12" r="3.5" fill="var(--surface-1)"/></svg>
         <div>
           <div class="brand-title">Mantenimiento Predictivo</div>
-          <div class="brand-sub">Planta 1 · Centro de control</div>
+          <div class="brand-sub">Flota de 100 máquinas · Centro de control</div>
         </div>
       </div>
       <div class="topbar-meta">
-        <div class="clock" title="Reloj de la simulación de telemetría">
+        <div class="clock">
           <span class="muted">Hora de planta</span>
           <strong id="sim-clock">—</strong>
-          <span class="muted small" id="sim-rate"></span>
+          <span class="replay" id="replay" title="Reproducción de la telemetría real del periodo de test">
+            <span class="replay-bar"><span id="replay-progress"></span></span>
+            <span class="muted small" id="sim-rate"></span>
+          </span>
         </div>
         <div class="conn" id="conn" role="status"><span class="dot"></span><span id="conn-label">Conectando…</span></div>
         <button class="icon-btn" id="theme-toggle" type="button" aria-label="Cambiar tema claro/oscuro">
@@ -55,7 +58,7 @@
       <a href="#/overview" data-route="overview"><svg width="16" height="16"><use href="#i-grid"/></svg><span>Resumen de planta</span></a>
       <a href="#/machine" data-route="machine"><svg width="16" height="16"><use href="#i-gauge"/></svg><span>Detalle de máquina</span></a>
       <a href="#/alarms" data-route="alarms"><svg width="16" height="16"><use href="#i-bell"/></svg><span>Alarmas y eventos</span><span class="nav-badge" id="nav-alarms" hidden>0</span></a>
-      <a href="#/diagnostics" data-route="diagnostics"><svg width="16" height="16"><use href="#i-flask"/></svg><span>Diagnóstico manual</span></a>
+      <a href="#/diagnostics" data-route="diagnostics"><svg width="16" height="16"><use href="#i-flask"/></svg><span>Análisis what-if</span></a>
       <a href="#/analytics" data-route="analytics"><svg width="16" height="16"><use href="#i-chart"/></svg><span>Modelo y datos</span></a>
     </nav>
 
@@ -65,19 +68,19 @@
         <div class="view-head">
           <div>
             <h1>Resumen de planta</h1>
-            <p class="muted">Estado en tiempo real de la flota y pronóstico de fallas.</p>
+            <p class="muted">Riesgo de falla por máquina en las próximas <span data-horizon>24</span> h, calculado en cada hora con telemetría, errores e historial de mantenimiento.</p>
           </div>
         </div>
 
         <div class="kpis" id="kpis"></div>
 
         <div class="filters" role="group" aria-label="Filtros de flota">
-          <label class="field-inline"><span>Línea</span><select id="f-line"><option value="">Todas</option></select></label>
-          <label class="field-inline"><span>Tipo</span><select id="f-type"><option value="">Todos</option></select></label>
+          <label class="field-inline"><span>Modelo</span><select id="f-model"><option value="">Todos</option></select></label>
           <div class="chips" id="f-status" aria-label="Estado"></div>
           <input type="search" id="f-search" placeholder="Buscar máquina…" aria-label="Buscar máquina">
           <div class="seg" role="tablist" aria-label="Vista">
-            <button type="button" data-view="cards" class="active" role="tab">Tarjetas</button>
+            <button type="button" data-view="map" class="active" role="tab">Mapa</button>
+            <button type="button" data-view="cards" role="tab">Tarjetas</button>
             <button type="button" data-view="table" role="tab">Tabla</button>
           </div>
         </div>
@@ -89,12 +92,10 @@
           <aside class="overview-side">
             <section class="card">
               <header class="card-head">
-                <h2>Pronóstico de fallas</h2>
-                <span class="muted small">Próximas 72 h</span>
+                <h2>Máquinas en riesgo</h2>
+                <span class="muted small">Falla probable en <span data-horizon>24</span> h</span>
               </header>
-              <div class="chart-box" id="forecast-box"><canvas id="forecast-chart" aria-label="Horas estimadas hasta la falla por máquina"></canvas></div>
-              <p class="empty" id="forecast-empty" hidden>Ninguna máquina con falla prevista en las próximas 72 h.</p>
-              <div class="legend" id="forecast-legend"></div>
+              <ul class="risk-list" id="risk-list"></ul>
             </section>
             <section class="card">
               <header class="card-head">
@@ -117,24 +118,31 @@
           </div>
           <div class="head-actions">
             <label class="field-inline"><span>Máquina</span><select id="m-select"></select></label>
-            <button class="btn primary" id="m-maint" type="button"><svg width="14" height="14"><use href="#i-wrench"/></svg>Registrar mantenimiento</button>
+            <button class="btn primary" id="m-maint" type="button"><svg width="14" height="14"><use href="#i-wrench"/></svg>Registrar orden de trabajo</button>
           </div>
         </div>
 
         <div class="kpis" id="m-kpis"></div>
 
-        <section class="card">
-          <header class="card-head">
-            <h2>Índice de salud y proyección de falla</h2>
-            <div class="legend" id="health-legend"></div>
-          </header>
-          <div class="chart-box tall"><canvas id="health-chart" aria-label="Evolución del índice de salud"></canvas></div>
-          <p class="note small muted" id="health-note"></p>
-        </section>
+        <div class="detail-grid">
+          <section class="card">
+            <header class="card-head">
+              <h2>Riesgo de falla en las próximas <span data-horizon>24</span> h</h2>
+              <div class="legend" id="risk-legend"></div>
+            </header>
+            <div class="chart-box tall"><canvas id="risk-chart" aria-label="Evolución del riesgo de falla"></canvas></div>
+            <p class="note small muted">Probabilidad calibrada de que falle algún componente dentro del horizonte. Las líneas verticales marcan las fallas y mantenimientos reales del periodo.</p>
+          </section>
+          <section class="card">
+            <header class="card-head"><h2>Componentes</h2><span class="muted small">Prob. de falla · días desde reemplazo</span></header>
+            <div id="m-components"></div>
+          </section>
+        </div>
 
         <section class="card">
           <header class="card-head">
-            <h2>Sensores · últimas 48 h</h2>
+            <h2>Sensores · últimos 7 días</h2>
+            <div class="legend" id="sensor-legend"></div>
             <div class="seg" role="tablist" aria-label="Vista de sensores">
               <button type="button" data-sview="charts" class="active" role="tab">Gráficas</button>
               <button type="button" data-sview="table" role="tab">Tabla</button>
@@ -155,7 +163,7 @@
         <div class="view-head">
           <div>
             <h1>Alarmas y eventos</h1>
-            <p class="muted">Registro de alarmas por condición, predicciones de falla y mantenimientos.</p>
+            <p class="muted">Alarmas del modelo y su resultado, fallas reales, mantenimientos, errores del controlador y órdenes de trabajo.</p>
           </div>
           <div class="head-actions">
             <button class="btn" id="ack-all" type="button">Reconocer visibles</button>
@@ -174,9 +182,11 @@
           <label class="field-inline"><span>Tipo</span>
             <select id="a-kind">
               <option value="">Todos</option>
-              <option value="alarm">Alarma por condición</option>
-              <option value="prediction">Predicción de falla</option>
-              <option value="maintenance">Mantenimiento</option>
+              <option value="prediction">Alarma del modelo</option>
+              <option value="failure">Falla real</option>
+              <option value="maintenance">Mantenimiento programado</option>
+              <option value="error">Error del controlador</option>
+              <option value="workorder">Orden de trabajo</option>
             </select>
           </label>
           <label class="check"><input type="checkbox" id="a-active"> Solo sin reconocer</label>
@@ -186,34 +196,41 @@
         </section>
       </section>
 
-      <!-- ============================ DIAGNÓSTICO ============================ -->
+      <!-- ============================ WHAT-IF ============================ -->
       <section class="view" id="view-diagnostics" hidden>
         <div class="view-head">
           <div>
-            <h1>Diagnóstico manual</h1>
-            <p class="muted">Evalúe una lectura puntual de sensores (por ejemplo, una ronda de inspección con equipo portátil).</p>
+            <h1>Análisis what-if</h1>
+            <p class="muted">Parta del estado actual de una máquina y modifique sensores, errores o la antigüedad de sus componentes para ver cómo cambia el riesgo.</p>
+          </div>
+          <div class="head-actions">
+            <label class="field-inline"><span>Partir de</span><select id="w-machine"></select></label>
           </div>
         </div>
         <div class="diag-grid">
           <form class="card" id="diag-form" novalidate>
-            <header class="card-head"><h2>Lectura de sensores</h2></header>
-            <label class="field"><span>Tipo de máquina</span>
-              <select name="Machine_Type">
-                <option value="Lathe">Torno CNC</option>
-                <option value="Mill">Fresadora</option>
-                <option value="Drill">Taladro de columna</option>
-              </select>
-            </label>
+            <header class="card-head"><h2>Estado de la máquina</h2></header>
+            <div class="form-row">
+              <label class="field"><span>Modelo</span>
+                <select name="model"><option>model1</option><option>model2</option><option>model3</option><option>model4</option></select>
+              </label>
+              <label class="field"><span>Antigüedad (años)</span><input type="number" name="age" min="0" max="100" step="1"></label>
+            </div>
+            <h3 class="form-section">Media de sensores · últimas 24 h</h3>
             <div id="diag-fields"></div>
+            <h3 class="form-section">Errores del controlador · últimas 24 h</h3>
+            <div class="form-row five" id="diag-errors"></div>
+            <h3 class="form-section">Días desde el último reemplazo</h3>
+            <div class="form-row four" id="diag-days"></div>
             <div class="form-actions">
-              <button class="btn" type="button" id="diag-reset">Valores nominales</button>
-              <button class="btn primary" type="submit">Diagnosticar</button>
+              <button class="btn" type="button" id="diag-reset">Restaurar estado actual</button>
+              <button class="btn primary" type="submit">Calcular riesgo</button>
             </div>
             <p class="error" id="diag-error" hidden></p>
           </form>
           <section class="card" id="diag-result">
             <header class="card-head"><h2>Resultado</h2></header>
-            <p class="empty">Introduzca una lectura y pulse <strong>Diagnosticar</strong>.</p>
+            <p class="empty">Ajuste el estado y pulse <strong>Calcular riesgo</strong>.</p>
           </section>
         </div>
       </section>
@@ -233,13 +250,17 @@
 
   <dialog id="maint-dialog" aria-labelledby="maint-title">
     <form method="dialog" id="maint-form">
-      <h2 id="maint-title">Registrar mantenimiento</h2>
+      <h2 id="maint-title">Registrar orden de trabajo</h2>
       <p class="muted" id="maint-machine"></p>
       <label class="field"><span>Técnico responsable</span><input name="technician" maxlength="80" autocomplete="name"></label>
-      <label class="field"><span>Trabajos realizados</span><textarea name="notes" rows="3" maxlength="500" placeholder="Cambio de rodamientos, lubricación, ajuste de alineación…"></textarea></label>
+      <label class="field"><span>Componente</span>
+        <select name="component"><option value="">Sin especificar</option><option>comp1</option><option>comp2</option><option>comp3</option><option>comp4</option></select>
+      </label>
+      <label class="field"><span>Trabajos realizados</span><textarea name="notes" rows="3" maxlength="500" placeholder="Reemplazo preventivo, inspección, ajuste…"></textarea></label>
+      <p class="small muted">La orden queda en el registro y reconoce las alarmas abiertas de la máquina. La telemetría reproducida es histórica, por lo que no se modifica.</p>
       <div class="form-actions">
         <button class="btn" value="cancel" type="submit" formnovalidate>Cancelar</button>
-        <button class="btn primary" value="confirm" type="submit">Confirmar intervención</button>
+        <button class="btn primary" value="confirm" type="submit">Registrar</button>
       </div>
     </form>
   </dialog>

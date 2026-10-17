@@ -1,8 +1,8 @@
-"""Ejecuta el flujo completo: ingesta (opcional) -> ETL -> entrenamiento.
+"""Ejecuta el flujo completo: ingesta (si faltan datos) -> ETL -> entrenamiento.
 
 Uso:
-    python run_pipeline.py              # ETL + entrenamiento con los datos de landing
-    python run_pipeline.py --download   # descarga primero el dataset desde Kaggle
+    python run_pipeline.py              # descarga el dataset solo si no está en Data/landing
+    python run_pipeline.py --download   # fuerza una nueva descarga
 """
 import sys
 
