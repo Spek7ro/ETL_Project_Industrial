@@ -7,6 +7,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src ./src
+COPY frontend ./frontend
 COPY Data/landing ./Data/landing
 COPY run_pipeline.py .
 

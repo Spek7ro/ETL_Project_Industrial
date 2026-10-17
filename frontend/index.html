@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Centro de Mantenimiento Predictivo</title>
+  <meta name="description" content="Monitorización de estado de máquinas, alarmas y pronóstico de fallas.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%232a78d6' d='M12 2l2.1 2.6 3.3-.6.6 3.3L21 9.4 19.6 12 21 14.6l-3 2.1-.6 3.3-3.3-.6L12 22l-2.1-2.6-3.3.6-.6-3.3L3 14.6 4.4 12 3 9.4l3-2.1.6-3.3 3.3.6z'/%3E%3Ccircle cx='12' cy='12' r='3.5' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/styles.css">
+  <script>
+    // Aplica el tema guardado antes de pintar para evitar parpadeo
+    try { const t = localStorage.getItem("pm-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-ok" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M4.8 8.2l2.1 2.1 4.3-4.4" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-warning" viewBox="0 0 16 16"><path d="M8 1.2l7.2 13.1H.8z" fill="currentColor"/><path d="M8 6v3.6" stroke="#0b0b0b" stroke-width="1.7" stroke-linecap="round"/><circle cx="8" cy="12" r="1" fill="#0b0b0b"/></symbol>
+    <symbol id="i-serious" viewBox="0 0 16 16"><path d="M8 .8l7.2 7.2L8 15.2.8 8z" fill="currentColor"/><path d="M8 4.6v4" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/><circle cx="8" cy="11.2" r="1" fill="#fff"/></symbol>
+    <symbol id="i-critical" viewBox="0 0 16 16"><path d="M5 1h6l4 4v6l-4 4H5l-4-4V5z" fill="currentColor"/><path d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M8 7.2v4.2" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/><circle cx="8" cy="4.8" r="1" fill="#fff"/></symbol>
+    <symbol id="i-wrench" viewBox="0 0 16 16"><path d="M14.5 4.2l-2.3 2.3-2-.6-.6-2 2.3-2.3A4 4 0 0 0 6.6 6.8L1.5 11.9a1.6 1.6 0 0 0 2.3 2.3l5.1-5.1a4 4 0 0 0 5.6-4.9z" fill="currentColor"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 16 16"><path d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z" fill="currentColor"/></symbol>
+    <symbol id="i-gauge" viewBox="0 0 16 16"><path d="M8 3a7 7 0 0 0-7 7c0 1.1.3 2.2.7 3h12.6c.4-.8.7-1.9.7-3a7 7 0 0 0-7-7zm0 2.2a.9.9 0 1 1 0 1.8.9.9 0 0 1 0-1.8zM3.6 10.4a.9.9 0 1 1 0-1.8.9.9 0 0 1 0 1.8zm5.3 1.2a1.3 1.3 0 0 1-2.1-1.5l3.6-3.4z" fill="currentColor"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 16 16"><path d="M8 15a2 2 0 0 0 2-2H6a2 2 0 0 0 2 2zm5-4V7a5 5 0 0 0-4-4.9V1H7v1.1A5 5 0 0 0 3 7v4l-1.5 1.5V13h13v-.5z" fill="currentColor"/></symbol>
+    <symbol id="i-flask" viewBox="0 0 16 16"><path d="M6 1h4v1H9.5v4.3l4.3 6.9A1.2 1.2 0 0 1 12.8 15H3.2a1.2 1.2 0 0 1-1-1.8l4.3-6.9V2H6z" fill="currentColor"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 16 16"><path d="M1 14h14v1H1zM2 9h2.5v4H2zM6.7 5h2.5v8H6.7zM11.5 2H14v11h-2.5z" fill="currentColor"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3.2" fill="currentColor"/><path d="M8 .8v2M8 13.2v2M.8 8h2M13.2 8h2M2.9 2.9l1.4 1.4M11.7 11.7l1.4 1.4M2.9 13.1l1.4-1.4M11.7 4.3l1.4-1.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 16 16"><path d="M13.5 10.4A6 6 0 0 1 5.6 2.5a6 6 0 1 0 7.9 7.9z" fill="currentColor"/></symbol>
+  </svg>
+
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2l2.1 2.6 3.3-.6.6 3.3L21 9.4 19.6 12 21 14.6l-3 2.1-.6 3.3-3.3-.6L12 22l-2.1-2.6-3.3.6-.6-3.3L3 14.6 4.4 12 3 9.4l3-2.1.6-3.3 3.3.6z"/><circle cx="12" cy="12" r="3.5" fill="var(--surface-1)"/></svg>
+        <div>
+          <div class="brand-title">Mantenimiento Predictivo</div>
+          <div class="brand-sub">Planta 1 · Centro de control</div>
+        </div>
+      </div>
+      <div class="topbar-meta">
+        <div class="clock" title="Reloj de la simulación de telemetría">
+          <span class="muted">Hora de planta</span>
+          <strong id="sim-clock">—</strong>
+          <span class="muted small" id="sim-rate"></span>
+        </div>
+        <div class="conn" id="conn" role="status"><span class="dot"></span><span id="conn-label">Conectando…</span></div>
+        <button class="icon-btn" id="theme-toggle" type="button" aria-label="Cambiar tema claro/oscuro">
+          <svg width="16" height="16"><use href="#i-moon"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <nav class="sidenav" aria-label="Secciones">
+      <a href="#/overview" data-route="overview"><svg width="16" height="16"><use href="#i-grid"/></svg><span>Resumen de planta</span></a>
+      <a href="#/machine" data-route="machine"><svg width="16" height="16"><use href="#i-gauge"/></svg><span>Detalle de máquina</span></a>
+      <a href="#/alarms" data-route="alarms"><svg width="16" height="16"><use href="#i-bell"/></svg><span>Alarmas y eventos</span><span class="nav-badge" id="nav-alarms" hidden>0</span></a>
+      <a href="#/diagnostics" data-route="diagnostics"><svg width="16" height="16"><use href="#i-flask"/></svg><span>Diagnóstico manual</span></a>
+      <a href="#/analytics" data-route="analytics"><svg width="16" height="16"><use href="#i-chart"/></svg><span>Modelo y datos</span></a>
+    </nav>
+
+    <main class="content" id="content">
+      <!-- ============================== RESUMEN ============================== -->
+      <section class="view" id="view-overview" hidden>
+        <div class="view-head">
+          <div>
+            <h1>Resumen de planta</h1>
+            <p class="muted">Estado en tiempo real de la flota y pronóstico de fallas.</p>
+          </div>
+        </div>
+
+        <div class="kpis" id="kpis"></div>
+
+        <div class="filters" role="group" aria-label="Filtros de flota">
+          <label class="field-inline"><span>Línea</span><select id="f-line"><option value="">Todas</option></select></label>
+          <label class="field-inline"><span>Tipo</span><select id="f-type"><option value="">Todos</option></select></label>
+          <div class="chips" id="f-status" aria-label="Estado"></div>
+          <input type="search" id="f-search" placeholder="Buscar máquina…" aria-label="Buscar máquina">
+          <div class="seg" role="tablist" aria-label="Vista">
+            <button type="button" data-view="cards" class="active" role="tab">Tarjetas</button>
+            <button type="button" data-view="table" role="tab">Tabla</button>
+          </div>
+        </div>
+
+        <div class="overview-grid">
+          <div class="overview-main">
+            <div id="fleet"></div>
+          </div>
+          <aside class="overview-side">
+            <section class="card">
+              <header class="card-head">
+                <h2>Pronóstico de fallas</h2>
+                <span class="muted small">Próximas 72 h</span>
+              </header>
+              <div class="chart-box" id="forecast-box"><canvas id="forecast-chart" aria-label="Horas estimadas hasta la falla por máquina"></canvas></div>
+              <p class="empty" id="forecast-empty" hidden>Ninguna máquina con falla prevista en las próximas 72 h.</p>
+              <div class="legend" id="forecast-legend"></div>
+            </section>
+            <section class="card">
+              <header class="card-head">
+                <h2>Alarmas activas</h2>
+                <a href="#/alarms" class="link small">Ver todas</a>
+              </header>
+              <ul class="event-list" id="side-alarms"></ul>
+            </section>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ============================== DETALLE ============================== -->
+      <section class="view" id="view-machine" hidden>
+        <div class="view-head">
+          <div>
+            <div class="crumbs"><a href="#/overview" class="link">Resumen</a> <span class="muted">/</span> <span id="m-crumb">Máquina</span></div>
+            <h1 id="m-title">Seleccione una máquina</h1>
+            <p class="muted" id="m-sub"></p>
+          </div>
+          <div class="head-actions">
+            <label class="field-inline"><span>Máquina</span><select id="m-select"></select></label>
+            <button class="btn primary" id="m-maint" type="button"><svg width="14" height="14"><use href="#i-wrench"/></svg>Registrar mantenimiento</button>
+          </div>
+        </div>
+
+        <div class="kpis" id="m-kpis"></div>
+
+        <section class="card">
+          <header class="card-head">
+            <h2>Índice de salud y proyección de falla</h2>
+            <div class="legend" id="health-legend"></div>
+          </header>
+          <div class="chart-box tall"><canvas id="health-chart" aria-label="Evolución del índice de salud"></canvas></div>
+          <p class="note small muted" id="health-note"></p>
+        </section>
+
+        <section class="card">
+          <header class="card-head">
+            <h2>Sensores · últimas 48 h</h2>
+            <div class="seg" role="tablist" aria-label="Vista de sensores">
+              <button type="button" data-sview="charts" class="active" role="tab">Gráficas</button>
+              <button type="button" data-sview="table" role="tab">Tabla</button>
+            </div>
+          </header>
+          <div class="sensor-grid" id="sensor-charts"></div>
+          <div class="table-wrap" id="sensor-table" hidden></div>
+        </section>
+
+        <section class="card">
+          <header class="card-head"><h2>Historial de eventos de la máquina</h2></header>
+          <ul class="event-list" id="m-events"></ul>
+        </section>
+      </section>
+
+      <!-- ============================== ALARMAS ============================== -->
+      <section class="view" id="view-alarms" hidden>
+        <div class="view-head">
+          <div>
+            <h1>Alarmas y eventos</h1>
+            <p class="muted">Registro de alarmas por condición, predicciones de falla y mantenimientos.</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn" id="ack-all" type="button">Reconocer visibles</button>
+          </div>
+        </div>
+        <div class="filters" role="group" aria-label="Filtros de alarmas">
+          <label class="field-inline"><span>Severidad</span>
+            <select id="a-sev">
+              <option value="">Todas</option>
+              <option value="critical">Crítica</option>
+              <option value="serious">Alta</option>
+              <option value="warning">Media</option>
+              <option value="info">Informativa</option>
+            </select>
+          </label>
+          <label class="field-inline"><span>Tipo</span>
+            <select id="a-kind">
+              <option value="">Todos</option>
+              <option value="alarm">Alarma por condición</option>
+              <option value="prediction">Predicción de falla</option>
+              <option value="maintenance">Mantenimiento</option>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" id="a-active"> Solo sin reconocer</label>
+        </div>
+        <section class="card flush">
+          <div class="table-wrap" id="alarms-table"></div>
+        </section>
+      </section>
+
+      <!-- ============================ DIAGNÓSTICO ============================ -->
+      <section class="view" id="view-diagnostics" hidden>
+        <div class="view-head">
+          <div>
+            <h1>Diagnóstico manual</h1>
+            <p class="muted">Evalúe una lectura puntual de sensores (por ejemplo, una ronda de inspección con equipo portátil).</p>
+          </div>
+        </div>
+        <div class="diag-grid">
+          <form class="card" id="diag-form" novalidate>
+            <header class="card-head"><h2>Lectura de sensores</h2></header>
+            <label class="field"><span>Tipo de máquina</span>
+              <select name="Machine_Type">
+                <option value="Lathe">Torno CNC</option>
+                <option value="Mill">Fresadora</option>
+                <option value="Drill">Taladro de columna</option>
+              </select>
+            </label>
+            <div id="diag-fields"></div>
+            <div class="form-actions">
+              <button class="btn" type="button" id="diag-reset">Valores nominales</button>
+              <button class="btn primary" type="submit">Diagnosticar</button>
+            </div>
+            <p class="error" id="diag-error" hidden></p>
+          </form>
+          <section class="card" id="diag-result">
+            <header class="card-head"><h2>Resultado</h2></header>
+            <p class="empty">Introduzca una lectura y pulse <strong>Diagnosticar</strong>.</p>
+          </section>
+        </div>
+      </section>
+
+      <!-- ============================ ANALÍTICA ============================ -->
+      <section class="view" id="view-analytics" hidden>
+        <div class="view-head">
+          <div>
+            <h1>Modelo y datos</h1>
+            <p class="muted">Resultados del pipeline ETL y del entrenamiento del modelo de machine learning.</p>
+          </div>
+        </div>
+        <div id="analytics"></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="maint-dialog" aria-labelledby="maint-title">
+    <form method="dialog" id="maint-form">
+      <h2 id="maint-title">Registrar mantenimiento</h2>
+      <p class="muted" id="maint-machine"></p>
+      <label class="field"><span>Técnico responsable</span><input name="technician" maxlength="80" autocomplete="name"></label>
+      <label class="field"><span>Trabajos realizados</span><textarea name="notes" rows="3" maxlength="500" placeholder="Cambio de rodamientos, lubricación, ajuste de alineación…"></textarea></label>
+      <div class="form-actions">
+        <button class="btn" value="cancel" type="submit" formnovalidate>Cancelar</button>
+        <button class="btn primary" value="confirm" type="submit">Confirmar intervención</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="vendor/chart.umd.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
