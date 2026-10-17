@@ -1,0 +1,16 @@
+{
+    "machine_id": "M-084",
+    "timestamp": "2015-10-01T18:00:00",
+    "failure_probability": 0.9785,
+    "failure_predicted": true,
+    "risk_level": "ALTO",
+    "predicted_component": "comp1",
+    "component_probabilities": {
+        "comp1": 0.9785,
+        "comp2": 0.0,
+        "comp3": 0.0,
+        "comp4": 0.0
+    },
+    "horizon_hours": 24,
+    "recommendation": "Falla probable de comp1 en las próximas 24 h: programar su reemplazo antes del próximo turno."
+}
